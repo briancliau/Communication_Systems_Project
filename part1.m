@@ -231,3 +231,61 @@ title('Half-Sine Eye Diagram After Channel and Noise');
 
 eyediagram(s2_noisy, Ns);
 title('SRRC Eye Diagram After Channel and Noise');
+
+%% Matched Filter
+% matched filter impulse response for both pulse shaping functions
+match_g1 = flip(g1);
+match_g2 = flip(g2);
+
+match_g1_plot = match_g1;
+match_g1_plot(end + 1) = 0;
+
+% frequency axis
+N_fft = 1024;
+fs = Ns / Tb;                       
+f = linspace(-fs/2, fs/2, N_fft);   
+
+% compute FFTs
+match_g1_f = fftshift(fft(match_g1, N_fft));
+match_g2_f = fftshift(fft(match_g2, N_fft));
+
+% plot impulse response for both pulse shaping functions
+figure
+subplot(2,1,1);
+plot(linspace(0, 1, Ns+1), match_g1_plot);
+xlabel('Time (t/T)');
+ylabel('Amplitude');
+title('(a) Matched Filter Half-Sine Pulse - Time Domain');
+subplot(2,1,2);
+plot(f, 20*log10(abs(match_g1_f)));   % magnitude in dB
+xlabel('Frequency (Hz)');
+ylabel('Magnitude (dB)');
+title('(b) Half-Sine Pulse - Frequency Domain');
+
+
+figure
+subplot(2,1,1);
+t_srrc = linspace(-K, K, 2 * K * Ns + 1);  % time axis spans -K to K
+plot(t_srrc, match_g2);
+xlabel('Time (t/T)');
+ylabel('Amplitude');
+title('(a) Matched Filter SRRC Pulse - Time Domain');
+subplot(2,1,2);
+plot(f, 20*log10(abs(match_g2_f)));   % magnitude in dB
+xlabel('Frequency (Hz)');
+ylabel('Magnitude (dB)');
+title('(b) Match Filter SRRC Pulse - Frequency Domain');
+
+%% Eye Diagram Q9
+s1_matched = conv(s1_noisy, match_g1, 'same');
+s2_matched = conv(s2_noisy, match_g2, 'same');
+
+offset = 16; 
+eyediagram(s1_matched, 2*Ns, 2, Ns/2);    % For 1-bit
+title('Half-Sine Eye Diagram (1-Bit Duration)');
+eyediagram(s1_matched, 2*Ns);  % For 2-bit
+title('Half-Sine Eye Diagram (2-Bit Duration)');
+eyediagram(s2_matched, 2*Ns, 2, Ns/2);
+title('SRRC Eye Diagram (1-Bit Duration)');
+eyediagram(s2_matched, 2*Ns);
+title('SRRC Eye Diagram (2-Bit Duration)');
