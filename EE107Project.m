@@ -104,12 +104,13 @@ g2_f = fftshift(fft(g2, N_fft));
 
 
 clf;
-randbitstream = 2*randi([0 1], 1, 10)-1;
+numberofbits = 100;
+randbitstream = 2*randi([0 1], 1, numberofbits)-1;
 t_bits = 0:length(randbitstream)-1;
 %stairs(t_bits, randbitstream)
 %hold on
 randbitstream = upsample(randbitstream,32);
-randbitstream = circshift(randbitstream,16);
+randbitstream = circshift(randbitstream,15);
 halfsinebits = conv(randbitstream,g1,'same');
 SRRCbits = conv(randbitstream,g2,'same');
 t_total1 = linspace(0, 10, length(randbitstream));
@@ -132,23 +133,39 @@ t_total1 = linspace(0, 10, length(randbitstream));
 % clf;
 h = [1,1/2,3/4,-2/7];
 %freqz(h)
-heff = [upsample(h, 32),zeros(1,320-128)];
+heff = [upsample(h, 32),zeros(1,numberofbits*32-4*32)];
 L = 2^15;
-channelhalfsine = filter(heff,1,halfsinebits);
-channelSRRC = filter(heff,1,SRRCbits);
+%channelhalfsine = filter(heff,1,halfsinebits);
+channelhalfsine = conv(heff,halfsinebits);
+%channelSRRC = filter(heff,1,SRRCbits);
+channelSRRC = conv(heff,SRRCbits);
  %plot(t_total1,channelhalfsine)
  %hold on
  %plot(t_total1,channelSRRC(1:320))
- noise = .01*randn([1,length(channelSRRC)]);
+ sigma = .1;
+ noise = sigma*randn([1,length(channelhalfsine)]);
  channelhalfsine = channelhalfsine+noise;
  channelSRRC = channelSRRC+noise;
  %plot(t_total, channelhalfsine+noise)
+match_g1 = flip(g1);
+channelhalfsine = filter(match_g1,1,channelhalfsine);
 match_g2 = flip(g2);
-channelSRRC = conv(channelSRRC, match_g2, 'same');
+channelSRRC = filter(match_g2,1,channelSRRC);
 ones = [1, zeros(1, L-1)];
-invertedchannel = filter(1,heff,ones);
-channelSRRC = filter(invertedchannel,1,channelSRRC);
-channelhalfsine = filter(invertedchannel,1,channelhalfsine);
-eyediagram(channelSRRC(32/2+1:end),32)
+invertedchannel = ifft(1./fft(heff));%filter(1,heff,ones); %ZFE filter
+ %channelSRRC = filter(invertedchannel,1,channelSRRC);
+ %channelhalfsine = filter(invertedchannel,1,channelhalfsine);
+%eyediagram(channelhalfsine(31:3200),32)
+%eyediagram(channelSRRC(10*32+32/2:3200),32)
+%plot(invertedchannel)
+%freqz(invertedchannel)
+H = fft(heff,length(channelhalfsine));
+MMSE = conj(H)./(abs(H).^2+sigma^2);
+channelhalfsine = ifft(MMSE.*fft(channelhalfsine));
+channelSRRC = ifft(MMSE.*fft(channelSRRC));
+receivedhalfsine = channelhalfsine(1:3200);
+receivedSRRC = channelSRRC(1:3200);
+%eyediagram(receivedhalfsine(32*10-1:end),32)
+%eyediagram(receivedSRRC(32*10+16:end),32)(32/2+1:end),32)
 %plot(invertedchannel)
 %freqz(invertedchannel)
