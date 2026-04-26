@@ -1,5 +1,8 @@
 % load image as floating point numbers
-img = imread("nyc.jpg");
+img = imread("mushroom.png");
+if size(img, 3) == 3
+    img = rgb2gray(img);
+end
 image = im2double(img);
 
 % ensure divisbility by 8
@@ -118,7 +121,7 @@ heff = [upsample(h, 32), zeros(1, numberofbits*32 - 4*32)];
 L = 2^15;
 channelhalfsine = conv(heff,halfsinebits);
 channelSRRC = conv(heff,SRRCbits);
-sigma = .1;
+sigma = 0.1;
 noise = sigma*randn([1,length(channelhalfsine)]);
 channelhalfsine = channelhalfsine+noise;
 channelSRRC = channelSRRC+noise;
@@ -245,17 +248,21 @@ img_out_srrc = blockproc(B_rec_2d_srrc, [8 8], ifun);
 img_out_hs   = max(0, min(1, img_out_hs));
 img_out_srrc = max(0, min(1, img_out_srrc));
 
-% DISPLAY
-figure;
-subplot(1,2,1);
-imshow(img_out_hs, []);
-title(sprintf('Half-Sine | MMSE | \\sigma=%.2f', sigma));
+% Reshape all recovered blocks back into full 2D image layout
+B_rec_hs_full   = double(blocks_rec_hs)   / 255 * (max_value - min_value) + min_value;
+B_rec_srrc_full = double(blocks_rec_srrc) / 255 * (max_value - min_value) + min_value;
 
-subplot(1,2,2);
-imshow(img_out_srrc, []);
-title(sprintf('SRRC | MMSE | \\sigma=%.2f', sigma));
+% Reshape from [8, 8, num_blocks] -> [m, n] 2D DCT array
+B_rec_2d_hs_full   = reshape(permute(reshape(B_rec_hs_full,   [8, 8, m/8, n/8]), [1,3,2,4]), [m, n]);
+B_rec_2d_srrc_full = reshape(permute(reshape(B_rec_srrc_full, [8, 8, m/8, n/8]), [1,3,2,4]), [m, n]);
 
-sgtitle(sprintf('Q14: Recovered Image Patch (N=%d blocks)', N));
+% Inverse DCT on full image
+ifun = @(block_struct) idct2(block_struct.data);
+img_out_hs_full   = blockproc(B_rec_2d_hs_full,   [8 8], ifun);
+img_out_srrc_full = blockproc(B_rec_2d_srrc_full, [8 8], ifun);
+
+img_out_hs_full   = max(0, min(1, img_out_hs_full));
+img_out_srrc_full = max(0, min(1, img_out_srrc_full));
 
 % BER
 BER_hs   = sum(detected_hs   ~= double(bit_vector)) / numberofbits;
@@ -264,6 +271,7 @@ fprintf('SNR           = %.2f dB\n', 10*log10(1/sigma^2));
 fprintf('BER Half-Sine : %.6f\n', BER_hs);
 fprintf('BER SRRC      : %.6f\n', BER_srrc);
 
+%  FINAL COMPARISON FIGURE
 figure;
 subplot(1, 3, 1);
 imshow(image, []);
@@ -278,6 +286,7 @@ imshow(img_out_srrc_full, []);
 title(sprintf('SRRC | BER=%.4f', BER_srrc));
 
 sgtitle(sprintf('Full Image Recovery | SNR=%.1f dB | \\sigma=%.2f', 10*log10(1/sigma^2), sigma));
+
 
 % figure;
 % sgtitle(sprintf('Original vs Recovered Blocks — Pixel Space (N=%d, \\sigma=%.2f)', N, sigma));
