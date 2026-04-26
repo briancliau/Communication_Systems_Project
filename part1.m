@@ -1,4 +1,3 @@
-%% Image Processing
 % load image as floating point numbers
 img = imread("grayscale_cat.jpg");
 image = im2double(img);
@@ -24,268 +23,228 @@ B_quantized = uint8(round(B_scaled * 255));
 % Create 3D array
 blocks = reshape(B_quantized, [8, m/8, 8, n/8]);
 blocks = permute(blocks, [1, 3, 2, 4]);
-blocks = reshape (blocks, [8, 8, m*n/64]);
+blocks = reshape(blocks, [8, 8, m*n/64]);
+
+num_blocks = m * n / 64;
+B_3d = reshape(B, 8, 8, num_blocks);
 
 % N is the group size being transferred
 N = 5;
 
-%% Bit Stream Creation
+%  DISPLAY THE ACTUAL IMAGE BLOCKS USED IN TRANSMISSION
+figure;
+sgtitle(sprintf('Original Image Blocks Passed Through Pipeline (N=%d blocks)', N));
+
+for k = 1:N
+    % Extract the k-th quantized DCT block and undo quantization -> IDCT
+    dct_block_scaled = double(blocks(:,:,k)) / 255 * (max_value - min_value) + min_value;
+    pixel_block = idct2(dct_block_scaled);
+    pixel_block = max(0, min(1, pixel_block));  % clip to [0,1]
+
+    subplot(2, N, k);
+    imshow(pixel_block, []);
+    title(sprintf('Block %d (pixels)', k));
+
+    % Also show the raw quantized DCT coefficients as an image
+    subplot(2, N, N + k);
+    imshow(blocks(:,:,k), []);
+    title(sprintf('Block %d (DCT)', k));
+end
+
+%  ALSO SHOW WHERE THESE BLOCKS COME FROM IN THE FULL IMAGE
+figure;
+imshow(image, []);
+title('Full Image — Highlighted Transmitted Blocks');
+hold on;
+
+% The blocks are indexed in column-major order across the image.
+% Block index k corresponds to row r, col c in the block grid:
+num_block_cols = n / 8;
+for k = 1:N
+    block_col = ceil(k / (m/8));   % which block-column
+    block_row = mod(k-1, m/8) + 1; % which block-row
+    % pixel coordinates of top-left corner
+    px_x = (block_col - 1) * 8 + 1;
+    px_y = (block_row  - 1) * 8 + 1;
+    rectangle('Position', [px_x, px_y, 8, 8], ...
+              'EdgeColor', 'red', 'LineWidth', 1.5);
+end
+hold off;
+
+% Bit stream creation
 group = blocks(:, :, 1:N);
 col_vector = double(group(:));
 bit_matrix = int2bit(col_vector, 8);
 bit_vector = bit_matrix(:)';
 
-%% Modulation
+% Modulation
 symbols = 2*bit_vector - 1;
 
 % Half-sine pulsing shape function
 Ns = 32;
 t = linspace(0, 1, Ns+1);
-t = t(1:Ns);
-Tb = 1;
-dt = Tb / Ns;
+t = t(1:end-1);
 g1 = sin(pi*t);
-A1 = 1 / sqrt(sum(g1.^2) * dt);
-g1 = A1 * g1;
+g1 = g1/sqrt(sum(g1.^2)*1/Ns);
 
 % SRRC pulsing shape function
-alpha = 1;
-K = 2;
+alpha = .5;
+K = 6;
 g2 = rcosdesign(alpha, 2*K, Ns);
-A2 = 1 / sqrt(sum(g2.^2) * dt);
-g2 = A2 * g2;
-
+g2 = g2/sqrt(sum(g2.^2)*1/Ns);
 
 % frequency axis (-0.5 to 0.5 normalized frequency)
 N_fft = 1024;
-fs = Ns / Tb;                       
-f = linspace(-fs/2, fs/2, N_fft);   
+f = linspace(-Ns/2, Ns/2, N_fft);
 
 % compute FFTs
 g1_f = fftshift(fft(g1, N_fft));
 g2_f = fftshift(fft(g2, N_fft));
 
-g1_plot = g1;
-g1_plot(end + 1) = 0;
-
-% Half-sine pulse
-figure;
-subplot(3,1,1);
-plot(linspace(0, 1, Ns+1), g1_plot);   % time axis 0 to T=1
-xlabel('Time (t/T)');
-ylabel('Amplitude');
-title('(a) Half-Sine Pulse - Time Domain');
-
-subplot(3,1,2);
-plot(f, 20*log10(abs(g1_f)));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('(b) Half-Sine Pulse - Frequency Domain');
-
-subplot(3,1,3);
-plot(f, rad2deg(angle(g1_f)));
-xlabel('Frequency (Hz)');
-ylabel('Phase (degrees)');
-title('(c) Half-Sine Pulse - Phase Response');
-
-
-% SRRC pulse
-figure;
-subplot(3,1,1);
-t_srrc = linspace(-K, K, 2 * K * Ns + 1);  % time axis spans -K to K
-plot(t_srrc, g2);
-xlabel('Time (t/T)');
-ylabel('Amplitude');
-title('(a) SRRC Pulse - Time Domain');
-
-subplot(3,1,2);
-plot(f, 20*log10(abs(g2_f)));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('(b) SRRC Pulse - Frequency Domain');
-
-subplot(3,1,3);
-plot(f, rad2deg(angle(g2_f)));
-xlabel('Frequency (Hz)');
-ylabel('Phase (degrees)');
-title('(c) SRRC Pulse - Phase Response');
-
-% Bandwidth for g1
-power_g1 = abs(g1_f).^2;
-total_power_g1 = sum(power_g1);
-cumulative_power_g1 = cumsum(power_g1) / total_power_g1;
-
-low_idx = find(cumulative_power_g1 >= 0.005, 1, 'first');
-high_idx = find(cumulative_power_g1 >= 0.995, 1, 'first');
-
-f_low_g1 = f(low_idx);
-f_high_g1 = f(high_idx);
-bandwidth_99_g1 = f_high_g1 - f_low_g1
-
-% Bandwidth for g2
-power_g2 = abs(g2_f).^2;
-total_power_g2 = sum(power_g2);
-cumulative_power_g2 = cumsum(power_g2) / total_power_g2;
-
-low_idx = find(cumulative_power_g2 >= 0.005, 1, 'first');
-high_idx = find(cumulative_power_g2 >= 0.995, 1, 'first');
-
-f_low_g2 = f(low_idx);
-f_high_g2 = f(high_idx);
-bandwidth_99_g2 = f_high_g2 - f_low_g2
-
-%% Example Bit Stream & Pulse Shaping
 clf;
-randbitstream = 2*randi([0 1], 1, 10)-1;
-t_bits = 0:length(randbitstream)-1;
-bit_stream = randbitstream;
-stairs(t_bits, randbitstream)
-hold on
-randbitstream = upsample(randbitstream,32);
-randbitstream = circshift(randbitstream,16);
-halfsinebits = conv(randbitstream,g1,'same');
-SRRCbits = conv(randbitstream,g2,'same');
+numberofbits = length(symbols);
+randbitstream = symbols;
+
+randbitstream = upsample(randbitstream, 32);
+randbitstream = circshift(randbitstream, 15);
+halfsinebits = conv(randbitstream, g1, 'same');
+SRRCbits     = conv(randbitstream, g2, 'same');
 t_total1 = linspace(0, 10, length(randbitstream));
-plot(t_total1,halfsinebits)
-plot(t_total1,SRRCbits)
-figure;
-subplot(2,1,1);
-plot(f, 20*log10(abs(fftshift(fft(halfsinebits, N_fft)))));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('Half-Sine Modulation - Frequency Domain');
 
-
-subplot(2,1,2);
-plot(f, 20*log10(abs(fftshift(fft(SRRCbits, N_fft)))));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('SRRC Modulation - Frequency Domain');
-
-eyediagram(halfsinebits(Ns/2+1:end),32)
-title("Half-Sine Eye Diagram");
-
-%% Channel
-h = [1, 1/2, 3/4, -2/7]; 
-h_up = upsample(h, Ns);
-
-% pass modulated signals through channel
-s1_channel = conv(halfsinebits, h_up, 'same');
-s2_channel = conv(SRRCbits, h_up, 'same');
-
-% plot channel impulse and frequency response (use original h before upsampling)
-H = fftshift(fft(h, N_fft));
-
-figure;
-subplot(3,1,1);
-stem(h);                              % impulse response
-xlabel('Tap');
-ylabel('Amplitude');
-title('(a) Channel - Impulse Response');
-
-subplot(3,1,2);
-plot(f, 20*log10(abs(H)));
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('(b) Channel - Frequency Response');
-
-subplot(3,1,3);
-plot(f, rad2deg(angle(H)));
-xlabel('Frequency (Hz)');
-ylabel('Phase (degrees)');
-title('(c) Channel - Phase Response');
-
-figure
-stairs(t_bits, bit_stream);
-hold on;
-plot(t_total1, s1_channel);
-plot(t_total1, s2_channel);
-legend("Bit Stream", "S1", "S2");
-hold off;
-
-eyediagram(s1_channel(16+1:end), Ns);
-title('Half-Sine Eye Diagram After Channel');
-
-eyediagram(s2_channel, Ns);
-title('Eye Diagram');
-
-%% Gaussian Noise
-sigma_squared = 0.05;
-sigma = sqrt(sigma_squared);
-noise = sigma*randn(size(s1_channel), like=s1_channel);
-
-% Add Gaussian noise to the channel output
-s1_noisy = s1_channel + noise;
-s2_noisy = s2_channel + noise;
-
-figure
-stairs(t_bits, bit_stream);
-hold on;
-plot(t_total1, s1_noisy);
-plot(t_total1, s2_noisy);
-legend("Bit Stream", "S1", "S2");
-hold off;
-
-eyediagram(s1_noisy(16+1:end), Ns);
-title('Half-Sine Eye Diagram After Channel and Noise');
-
-eyediagram(s2_noisy, Ns);
-title('SRRC Eye Diagram After Channel and Noise');
-
-%% Matched Filter
-% matched filter impulse response for both pulse shaping functions
+h = [1,1/2,3/4,-2/7];
+heff = [upsample(h, 32), zeros(1, numberofbits*32 - 4*32)];
+L = 2^15;
+channelhalfsine = conv(heff,halfsinebits);
+channelSRRC = conv(heff,SRRCbits);
+sigma = .1;
+noise = sigma*randn([1,length(channelhalfsine)]);
+channelhalfsine = channelhalfsine+noise;
+channelSRRC = channelSRRC+noise;
 match_g1 = flip(g1);
+channelhalfsine = filter(match_g1,1,channelhalfsine);
 match_g2 = flip(g2);
+channelSRRC = filter(match_g2,1,channelSRRC);
+ones = [1, zeros(1, L-1)];
+invertedchannel = ifft(1./fft(heff));
 
-match_g1_plot = match_g1;
-match_g1_plot(end + 1) = 0;
+H = fft(heff,length(channelhalfsine));
+MMSE = conj(H)./(abs(H).^2+sigma^2);
+channelhalfsine = ifft(MMSE.*fft(channelhalfsine));
+channelSRRC = ifft(MMSE.*fft(channelSRRC));
+receivedhalfsine = channelhalfsine(1:numberofbits*32);
+receivedSRRC     = channelSRRC(1:numberofbits*32);
 
-% frequency axis
-N_fft = 1024;
-fs = Ns / Tb;                       
-f = linspace(-fs/2, fs/2, N_fft);   
+% For half-sine: find peak of matched filter output on an isolated impulse
+test_impulse = zeros(1, 10*Ns);
+test_impulse(1) = 1;
+hs_response = conv(conv(test_impulse, g1), match_g1);
+[~, peak_hs] = max(abs(hs_response));
+delay_hs = peak_hs - 1;
 
-% compute FFTs
-match_g1_f = fftshift(fft(match_g1, N_fft));
-match_g2_f = fftshift(fft(match_g2, N_fft));
+% For SRRC: same approach
+mmse_imp = real(ifft(MMSE));
+g2_delay = conv(match_g2, mmse_imp);
+g2_delay_truncated = g2_delay(320:end-320);
+% srrc_response = conv(conv(test_impulse, g2), g2_delay);
+[~, peak_srrc] = max(abs(g2_delay_truncated));
+delay_srrc = peak_srrc - 1;
+% delay_srrc = 18;
 
-% plot impulse response for both pulse shaping functions
-figure
-subplot(2,1,1);
-plot(linspace(0, 1, Ns+1), match_g1_plot);
-xlabel('Time (t/T)');
-ylabel('Amplitude');
-title('(a) Matched Filter Half-Sine Pulse - Time Domain');
-subplot(2,1,2);
-plot(f, 20*log10(abs(match_g1_f)));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('(b) Half-Sine Pulse - Frequency Domain');
+idx_hs   = delay_hs   + (0:numberofbits-1)*Ns + 1;
+idx_srrc = delay_srrc + (0:numberofbits-1)*Ns + 1;
 
+idx_hs   = min(idx_hs,   length(receivedhalfsine));
+idx_srrc = min(idx_srrc, length(receivedSRRC));
 
-figure
-subplot(2,1,1);
-t_srrc = linspace(-K, K, 2 * K * Ns + 1);  % time axis spans -K to K
-plot(t_srrc, match_g2);
-xlabel('Time (t/T)');
-ylabel('Amplitude');
-title('(a) Matched Filter SRRC Pulse - Time Domain');
-subplot(2,1,2);
-plot(f, 20*log10(abs(match_g2_f)));   % magnitude in dB
-xlabel('Frequency (Hz)');
-ylabel('Magnitude (dB)');
-title('(b) Match Filter SRRC Pulse - Frequency Domain');
+sampled_hs   = real(receivedhalfsine(idx_hs));
+sampled_srrc = real(receivedSRRC(idx_srrc));
 
-%% Eye Diagram Q9
-s1_matched = conv(s1_noisy, match_g1, 'same');
-s2_matched = conv(s2_noisy, match_g2, 'same');
+detected_hs   = double(sampled_hs   > 0);
+detected_srrc = double(sampled_srrc > 0);
 
-offset = 16; 
-eyediagram(s1_matched, 2*Ns, 2, Ns/2);    % For 1-bit
-title('Half-Sine Eye Diagram (1-Bit Duration)');
-eyediagram(s1_matched, 2*Ns);  % For 2-bit
-title('Half-Sine Eye Diagram (2-Bit Duration)');
-eyediagram(s2_matched, 2*Ns, 2, Ns/2);
-title('SRRC Eye Diagram (1-Bit Duration)');
-eyediagram(s2_matched, 2*Ns);
-title('SRRC Eye Diagram (2-Bit Duration)');
+%  CONVERSION TO IMAGE
+
+bit_mat_hs   = reshape(detected_hs,   8, [])';
+bit_mat_srrc = reshape(detected_srrc, 8, [])';
+
+px_hs   = uint8(bi2de(bit_mat_hs,   'left-msb'));
+px_srrc = uint8(bi2de(bit_mat_srrc, 'left-msb'));
+
+N_blocks_transmitted = N;
+blocks_rec_hs   = reshape(px_hs,   [8, 8, N_blocks_transmitted]);
+blocks_rec_srrc = reshape(px_srrc, [8, 8, N_blocks_transmitted]);
+
+%  IMAGE POST-PROCESSING
+
+B_rec_hs   = double(blocks_rec_hs)   / 255 * (max_value - min_value) + min_value;
+B_rec_srrc = double(blocks_rec_srrc) / 255 * (max_value - min_value) + min_value;
+
+B_rec_2d_hs   = reshape(permute(reshape(B_rec_hs,   [8, 8, 1, N]), [1,3,2,4]), [8, N*8]);
+B_rec_2d_srrc = reshape(permute(reshape(B_rec_srrc, [8, 8, 1, N]), [1,3,2,4]), [8, N*8]);
+
+ifun         = @(block_struct) idct2(block_struct.data);
+img_out_hs   = blockproc(B_rec_2d_hs,   [8 8], ifun);
+img_out_srrc = blockproc(B_rec_2d_srrc, [8 8], ifun);
+
+img_out_hs   = max(0, min(1, img_out_hs));
+img_out_srrc = max(0, min(1, img_out_srrc));
+
+% DISPLAY
+figure;
+subplot(1,2,1);
+imshow(img_out_hs, []);
+title(sprintf('Half-Sine | MMSE | \\sigma=%.2f', sigma));
+
+subplot(1,2,2);
+imshow(img_out_srrc, []);
+title(sprintf('SRRC | MMSE | \\sigma=%.2f', sigma));
+
+sgtitle(sprintf('Q14: Recovered Image Patch (N=%d blocks)', N));
+
+% BER
+BER_hs   = sum(detected_hs   ~= double(bit_vector)) / numberofbits;
+BER_srrc = sum(detected_srrc ~= double(bit_vector)) / numberofbits;
+fprintf('SNR           = %.2f dB\n', 10*log10(1/sigma^2));
+fprintf('BER Half-Sine : %.6f\n', BER_hs);
+fprintf('BER SRRC      : %.6f\n', BER_srrc);
+
+figure;
+sgtitle(sprintf('Original vs Recovered Blocks — Pixel Space (N=%d, \\sigma=%.2f)', N, sigma));
+
+for k = 1:N
+    % Original block: undo quantization -> IDCT
+    dct_orig = double(blocks(:,:,k)) / 255 * (max_value - min_value) + min_value;
+    pixel_orig = max(0, min(1, idct2(dct_orig)));
+
+    % Half-Sine recovered block
+    dct_hs = double(blocks_rec_hs(:,:,k)) / 255 * (max_value - min_value) + min_value;
+    pixel_hs = max(0, min(1, idct2(dct_hs)));
+
+    % SRRC recovered block
+    dct_srrc = double(blocks_rec_srrc(:,:,k)) / 255 * (max_value - min_value) + min_value;
+    pixel_srrc = max(0, min(1, idct2(dct_srrc)));
+
+    % Row 1: Original
+    subplot(3, N, k);
+    imshow(pixel_orig, []);
+    if k == 1, ylabel('Original', 'FontWeight', 'bold'); end
+    title(sprintf('Block %d', k));
+
+    % Row 2: Half-Sine recovered
+    subplot(3, N, N + k);
+    imshow(pixel_hs, []);
+    if k == 1, ylabel('Half-Sine', 'FontWeight', 'bold'); end
+
+    % Compute per-block MSE for half-sine
+    mse_hs = mean((pixel_orig(:) - pixel_hs(:)).^2);
+    title(sprintf('MSE=%.4f', mse_hs));
+
+    % Row 3: SRRC recovered
+    subplot(3, N, 2*N + k);
+    imshow(pixel_srrc, []);
+    if k == 1, ylabel('SRRC', 'FontWeight', 'bold'); end
+
+    % Compute per-block MSE for SRRC
+    mse_srrc = mean((pixel_orig(:) - pixel_srrc(:)).^2);
+    title(sprintf('MSE=%.4f', mse_srrc));
+end
