@@ -111,30 +111,39 @@ numberofbits = length(symbols);
 randbitstream = symbols;
 
 randbitstream = upsample(randbitstream, 32);
-randbitstream = circshift(randbitstream, 15);
-halfsinebits = conv(randbitstream, g1, 'same');
-SRRCbits     = conv(randbitstream, g2, 'same');
+%randbitstream = circshift(randbitstream, 15);
+halfsinebits = conv(randbitstream, g1);
+SRRCbits     = conv(randbitstream, g2);
 t_total1 = linspace(0, 10, length(randbitstream));
 
-h = [1,1/2,3/4,-2/7];
-heff = [upsample(h, 32), zeros(1, numberofbits*32 - 4*32)];
+% h = [1,1/2,3/4,-2/7];
+%h = [1,.4365,.1905,.0832,0,.0158,0,.003];
+h = [.5,1,0,.63,0,0,0,0,.25,0,0,0,.16,zeros(1,12),.1];
+powergainin = norm(h)^2
+heff = [upsample(h, 32), zeros(1, numberofbits*32 - length(h)*32)];
 L = 2^15;
 channelhalfsine = conv(heff,halfsinebits);
 channelSRRC = conv(heff,SRRCbits);
-sigma = 0.1;
+sigma = .95;
 noise = sigma*randn([1,length(channelhalfsine)]);
 channelhalfsine = channelhalfsine+noise;
+noise = sigma*randn([1,length(channelSRRC)]);
 channelSRRC = channelSRRC+noise;
 match_g1 = flip(g1);
 channelhalfsine = filter(match_g1,1,channelhalfsine);
 match_g2 = flip(g2);
 channelSRRC = filter(match_g2,1,channelSRRC);
 ones = [1, zeros(1, L-1)];
-invertedchannel = ifft(1./fft(heff));
-
+invertedchannel = 1./fft(heff,length(channelSRRC));
+%channelSRRC = ifft(fft(channelSRRC).*invertedchannel);
+invertedchannel = 1./fft(heff,length(channelhalfsine));
+%channelhalfsine = ifft(fft(channelhalfsine).*invertedchannel);
 H = fft(heff,length(channelhalfsine));
 MMSE = conj(H)./(abs(H).^2+sigma^2);
 channelhalfsine = ifft(MMSE.*fft(channelhalfsine));
+
+H = fft(heff,length(channelSRRC));
+MMSE = conj(H)./(abs(H).^2+sigma^2);
 channelSRRC = ifft(MMSE.*fft(channelSRRC));
 % receivedhalfsine = channelhalfsine(1:numberofbits*32);
 % receivedSRRC     = channelSRRC(1:numberofbits*32);
@@ -176,13 +185,18 @@ hs_eq      = conv(hs_mf(1:sig_len), mmse_imp);
 [~, peak_hs] = max(abs(hs_eq(1 : sig_len)));
 delay_hs     = peak_hs - 1;
 
+sig_len = length(channelSRRC);
+H_full  = fft(heff, sig_len);
+MMSE_full = conj(H_full) ./ (abs(H_full).^2 + sigma^2);
+mmse_imp  = real(ifft(MMSE_full));  % MMSE impulse response
+
 % SRRC: pulse -> matched filter -> MMSE
 srrc_tx      = conv(test_impulse, g2);
 srrc_mf      = conv(srrc_tx(1:sig_len), match_g2);
 srrc_eq      = conv(srrc_mf(1:sig_len), mmse_imp);
 [~, peak_srrc] = max(abs(srrc_eq(1 : sig_len)));
-% delay_srrc     = peak_srrc - 1;
-delay_srrc = 205;
+delay_srrc     = peak_srrc - 1;
+%delay_srrc = 205;
 
 % idx_hs   = delay_hs   + (0:numberofbits-1)*Ns + 1;
 % idx_srrc = delay_srrc + (0:numberofbits-1)*Ns + 1;
